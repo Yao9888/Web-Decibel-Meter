@@ -1,0 +1,7 @@
+{
+  "name": "分贝显示器",
+  "description": "一个利用麦克风实时显示环境音量分贝的监测工具。",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
