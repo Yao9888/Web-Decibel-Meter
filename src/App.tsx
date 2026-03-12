@@ -12,14 +12,33 @@ export default function App() {
   const [db, setDb] = useState(0);
   const [peakDb, setPeakDb] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [threshold, setThreshold] = useState(80);
+  const [autoInterrupt, setAutoInterrupt] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const interruptAudioRef = useRef<HTMLAudioElement | null>(null);
+  const lastInterruptTime = useRef<number>(0);
+
+  // Initialize a silent audio element to grab focus
+  useEffect(() => {
+    const audio = new Audio();
+    // A tiny silent base64 mp3
+    audio.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+    interruptAudioRef.current = audio;
+  }, []);
 
   const startMonitoring = async () => {
     try {
+      // Prime the interrupt audio (required for iOS/Mobile to allow later playback)
+      if (interruptAudioRef.current) {
+        interruptAudioRef.current.play().catch(() => {});
+        interruptAudioRef.current.pause();
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       
@@ -55,6 +74,18 @@ export default function App() {
     setDb(0);
   };
 
+  const triggerInterrupt = () => {
+    const now = Date.now();
+    // Prevent spamming (max once every 3 seconds)
+    if (now - lastInterruptTime.current < 3000) return;
+    
+    if (interruptAudioRef.current) {
+      interruptAudioRef.current.play().then(() => {
+        lastInterruptTime.current = now;
+      }).catch(e => console.error("Interrupt failed:", e));
+    }
+  };
+
   const updateLevel = () => {
     if (!analyserRef.current) return;
     
@@ -68,11 +99,14 @@ export default function App() {
     }
     const average = sum / bufferLength;
     
-    // Simple conversion to dB-like value for display
-    // 0-255 range to roughly 0-100 dB
     const currentDb = Math.round((average / 255) * 100);
     setDb(currentDb);
     setPeakDb(prev => Math.max(prev, currentDb));
+
+    // Check threshold for interruption
+    if (autoInterrupt && currentDb >= threshold) {
+      triggerInterrupt();
+    }
     
     animationFrameRef.current = requestAnimationFrame(updateLevel);
   };
@@ -125,11 +159,59 @@ export default function App() {
             <h1 className="text-[10px] font-mono uppercase tracking-[0.2em] text-zinc-500">环境音量监测仪 v1.0</h1>
           </div>
           <div className="flex gap-2">
-            <button className="p-2 rounded-full hover:bg-white/5 transition-colors text-zinc-500">
+            <button 
+              onClick={() => setShowSettings(!showSettings)}
+              className={`p-2 rounded-full transition-colors ${showSettings ? 'bg-emerald-500/20 text-emerald-500' : 'hover:bg-white/5 text-zinc-500'}`}
+            >
               <Settings2 size={14} />
             </button>
           </div>
         </div>
+
+        {/* Settings Panel */}
+        <AnimatePresence>
+          {showSettings && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="px-6 pb-6 overflow-hidden border-b border-white/5"
+            >
+              <div className="space-y-4 pt-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">自动打断后台音频</span>
+                  <button 
+                    onClick={() => setAutoInterrupt(!autoInterrupt)}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${autoInterrupt ? 'bg-emerald-500' : 'bg-zinc-700'}`}
+                  >
+                    <motion.div 
+                      animate={{ x: autoInterrupt ? 22 : 2 }}
+                      className="absolute top-1 w-3 h-3 bg-white rounded-full"
+                    />
+                  </button>
+                </div>
+                
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">打断阈值</span>
+                    <span className="text-[10px] font-mono text-emerald-500">{threshold} dB</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="30" 
+                    max="100" 
+                    value={threshold}
+                    onChange={(e) => setThreshold(parseInt(e.target.value))}
+                    className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                  />
+                  <p className="text-[8px] text-zinc-500 font-mono leading-relaxed">
+                    * 当音量超过此阈值时，应用将尝试通过播放静音音频来夺取系统音频焦点，从而暂停其他应用的播放。
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Main Display */}
         <div className="px-8 pt-4 pb-12 flex flex-col items-center">
